@@ -1,46 +1,64 @@
-import {Logger} from "./Logger";
-import {OCPPAction, OCPPErrorCode, OCPPMessageType} from "./OcppTypes";
-import * as request from "@voltbras/ts-ocpp/dist/messages/json/request";
-import * as response from "@voltbras/ts-ocpp/dist/messages/json/response";
+import { Logger } from "./Logger";
+import {
+  AuthorizeRequestV16,
+  BootNotificationRequestV16,
+  ChangeAvailabilityResponseV16,
+  ChangeConfigurationResponseV16,
+  GetConfigurationResponseV16,
+  GetDiagnosticsResponseV16,
+  HeartbeatRequestV16,
+  MeterValuesRequestV16,
+  OCPPCallErrorV16,
+  OCPPCallResultV16,
+  OCPPCallV16,
+  RemoteStartTransactionResponseV16,
+  RemoteStopTransactionResponseV16,
+  ResetResponseV16,
+  StartTransactionRequestV16,
+  StatusNotificationRequestV16,
+  StopTransactionRequestV16,
+  TriggerMessageResponseV16,
+  UnlockConnectorResponseV16,
+} from "@cshil/ocpp-tools";
+import { OCPPErrorCodeV16 } from "@cshil/ocpp-tools/types";
 
-export type OcppMessagePayload = OcppMessageRequestPayload | OcppMessageResponsePayload | OcppMessageErrorPayload;
+export type OcppMessagePayloadV16 =
+  | OCPPRequestTypeV16
+  | OcppMessageResponsePayloadV16
+  | OcppMessageErrorPayloadV16;
 
-export type OcppMessageRequestPayload =
-  | request.AuthorizeRequest
-  | request.BootNotificationRequest
-  | request.HeartbeatRequest
-  | request.MeterValuesRequest
-  | request.StartTransactionRequest
-  | request.StatusNotificationRequest
-  | request.StopTransactionRequest
+export type OCPPRequestTypeV16 =
+  | AuthorizeRequestV16
+  | BootNotificationRequestV16
+  | HeartbeatRequestV16
+  | MeterValuesRequestV16
+  | StartTransactionRequestV16
+  | StatusNotificationRequestV16
+  | StopTransactionRequestV16;
 
-export type OcppMessageResponsePayload =
-  | response.ChangeConfigurationResponse
-  | response.GetConfigurationResponse
-  | response.GetDiagnosticsResponse
-  | response.RemoteStartTransactionResponse
-  | response.RemoteStopTransactionResponse
-  | response.ResetResponse
-  | response.TriggerMessageResponse
-  | response.UnlockConnectorResponse
+export type OcppMessageResponsePayloadV16 =
+  | ChangeAvailabilityResponseV16
+  | ChangeConfigurationResponseV16
+  | GetConfigurationResponseV16
+  | GetDiagnosticsResponseV16
+  | RemoteStartTransactionResponseV16
+  | RemoteStopTransactionResponseV16
+  | ResetResponseV16
+  | TriggerMessageResponseV16
+  | UnlockConnectorResponseV16;
 
-export type OcppMessageErrorPayload = {
-  readonly errorCode: OCPPErrorCode;
+export type OcppMessageErrorPayloadV16 = {
+  readonly errorCode: OCPPErrorCodeV16;
   readonly errorDescription: string;
   readonly errorDetails?: object;
 };
 
-type MessageHandler = (
-  messageType: OCPPMessageType,
-  messageId: string,
-  action: OCPPAction,
-  payload: OcppMessagePayload
-) => void;
+type MessageHandler = (message: unknown) => void;
 
 export class OCPPWebSocket {
   private _ws: WebSocket | null = null;
   private _url: string;
-  private _basicAuth: {username: string; password: string} | null = null;
+  private _basicAuth: { username: string; password: string } | null = null;
   private _chargePointId: string;
   private _logger: Logger;
   private _messageHandler: MessageHandler | null = null;
@@ -49,15 +67,19 @@ export class OCPPWebSocket {
   private _maxReconnectAttempts: number = 5;
   private _reconnectDelay: number = 5000; // 5 seconds
 
-  constructor(url: string, chargePointId: string, logger: Logger,
-              basicAuthSettings: { username: string; password: string } | null = null) {
+  constructor(
+    url: string,
+    chargePointId: string,
+    logger: Logger,
+    basicAuthSettings: { username: string; password: string } | null = null,
+  ) {
     this._url = url;
     this._chargePointId = chargePointId;
     this._logger = logger;
     if (basicAuthSettings) {
       this._basicAuth = {
         username: basicAuthSettings.username,
-        password: basicAuthSettings.password
+        password: basicAuthSettings.password,
       };
     }
   }
@@ -68,7 +90,7 @@ export class OCPPWebSocket {
 
   public connect(
     onopen: (() => void) | null = null,
-    onclose: ((ev: CloseEvent) => void) | null = null
+    onclose: ((ev: CloseEvent) => void) | null = null,
   ): void {
     const url = new URL(this._url);
     if (this?._basicAuth) {
@@ -107,28 +129,17 @@ export class OCPPWebSocket {
     }
   }
 
-  public sendAction(
-    messageId: string,
-    action: OCPPAction,
-    payload: OcppMessageRequestPayload,
-  ): void {
-    const message = JSON.stringify([OCPPMessageType.CALL, messageId, action, payload]);
+  public sendAction(call: OCPPCallV16): void {
+    this.send(JSON.stringify(call.toRPCObject()));
+  }
+
+  public sendResult(result: OCPPCallResultV16): void {
+    const message = JSON.stringify(result.toRPCObject());
     this.send(message);
   }
 
-  public sendResult(
-      messageId: string,
-      payload: OcppMessageResponsePayload,
-  ): void {
-    const message = JSON.stringify([OCPPMessageType.CALL_RESULT, messageId, payload]);
-    this.send(message);
-  }
-
-  public sendError(
-      messageId: string,
-      payload: OcppMessageErrorPayload,
-  ): void {
-    const message = JSON.stringify([OCPPMessageType.CALL_ERROR, messageId, payload]);
+  public sendError(error: OCPPCallErrorV16): void {
+    const message = JSON.stringify(error.toRPCObject());
     this.send(message);
   }
 
@@ -155,26 +166,8 @@ export class OCPPWebSocket {
   private handleMessage(ev: MessageEvent): void {
     this._logger.log(`Received: ${JSON.stringify(ev)}`);
     try {
-      const messageArray = JSON.parse(ev.data.toString());
-      const len = messageArray.length;
-      if (!(!Array.isArray(messageArray) || len !== 3 || len !== 4)) {
-        this._logger.error("Invalid message format: " + messageArray);
-        return;
-      }
       if (this._messageHandler) {
-        if (len == 3) {
-          const [messageType, messageId, payload] = messageArray;
-          this._messageHandler(
-            messageType,
-            messageId,
-            OCPPAction.CallResult,
-            payload
-          );
-        }
-        if (len == 4) {
-          const [messageType, messageId, action, payload] = messageArray;
-          this._messageHandler(messageType, messageId, action, payload);
-        }
+        this._messageHandler(JSON.parse(ev.data.toString()));
       } else {
         this._logger.log("No message handler set");
       }
@@ -212,12 +205,12 @@ export class OCPPWebSocket {
     if (this._reconnectAttempts < this._maxReconnectAttempts) {
       this._reconnectAttempts++;
       this._logger.log(
-        `Attempting to reconnect (${this._reconnectAttempts}/${this._maxReconnectAttempts})...`
+        `Attempting to reconnect (${this._reconnectAttempts}/${this._maxReconnectAttempts})...`,
       );
       setTimeout(() => this.connect(), this._reconnectDelay);
     } else {
       this._logger.log(
-        "Max reconnect attempts reached. Please check your connection and try again."
+        "Max reconnect attempts reached. Please check your connection and try again.",
       );
     }
   }
